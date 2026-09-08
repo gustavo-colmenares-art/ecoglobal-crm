@@ -1,0 +1,8 @@
+EMPRESA_NOMBRE = "Eco Global"
+EMPRESA_NIT = "900786781-1"
+EMPRESA_DIRECCION = "Calle 6 No. 1-40, Barrio San Francisco"
+EMPRESA_CIUDAD = "Madrid, Cundinamarca"
+EMPRESA_TELEFONO = "3112434452"
+EMPRESA_EMAIL = "servicioalcliente@fundacion.ecoglobal.com"
+EMPRESA_REGIMEN = "Régimen Tributario Especial"
+EMPRESA_BANCO_INFO = "Bancolombia — Cuenta de Ahorros No. 38300005330"
