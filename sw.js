@@ -1,5 +1,5 @@
 // Service Worker — CRM Eco Global
-const CACHE = 'ecoglobal-crm-v1';
+const CACHE = 'ecoglobal-crm-v2';
 const ASSETS = [
   './',
   './index.html',
@@ -32,16 +32,17 @@ self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
   if (url.origin !== location.origin) return;
 
+  // Red primero: siempre intenta traer la version mas reciente del servidor.
+  // Si no hay conexion, usa la copia guardada como respaldo (modo offline).
   e.respondWith(
-    caches.match(e.request).then(cached => {
-      const networkFetch = fetch(e.request).then(res => {
+    fetch(e.request)
+      .then(res => {
         if (res && res.status === 200) {
           const clone = res.clone();
           caches.open(CACHE).then(cache => cache.put(e.request, clone));
         }
         return res;
-      }).catch(() => cached);
-      return cached || networkFetch;
-    })
+      })
+      .catch(() => caches.match(e.request))
   );
 });
