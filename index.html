@@ -1,16 +1,25 @@
 <!DOCTYPE html>
+<html lang="es">
+<head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>CRM Eco Global</title>
 
-<link rel="manifest" href="manifest.json">
-<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
-<link rel="icon" type="image/png" href="favicon.png">
-<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<!-- PWA Meta Tags -->
+<meta name="application-name" content="CRM Eco Global">
+<meta name="description" content="Sistema de gestión comercial — Fundación Ecoglobal®">
 <meta name="theme-color" content="#1B6B2E">
+<meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="CRM Eco Global">
+<meta name="apple-mobile-web-app-title" content="CRM EcoGlobal">
+<meta name="msapplication-TileColor" content="#0D4A1E">
+<meta name="msapplication-tap-highlight" content="no">
+
+<!-- Iconos -->
+<link rel="manifest" href="manifest.json">
+<link rel="icon" type="image/png" sizes="32x32" href="favicon.png">
+<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
 
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap">
 <!-- Nota: en producción reemplazar Plus Jakarta Sans por Neo Sans Arabic (fuente oficial Ecoglobal) -->
@@ -322,6 +331,8 @@ mark { background:var(--warn-dim);color:var(--warn);border-radius:2px; }
   #view { padding:16px; }
 }
 </style>
+</head>
+<body>
 
 <!-- ── PIN overlay ────────────────────────────────────── -->
 <div id="pin-overlay" style="position:fixed;inset:0;background:var(--sidebar-bg);display:flex;align-items:center;justify-content:center;z-index:1000">
@@ -507,8 +518,8 @@ mark { background:var(--warn-dim);color:var(--warn);border-radius:2px; }
    ECOGLOBAL CRM — Configuración
    ⚠ Reemplazar las tres constantes con sus datos reales
 ═══════════════════════════════════════════════════════ */
-const SUPABASE_URL = 'https://ajadwjpjobgexrdjobyb.supabase.co';   // ← Project URL
-const SUPABASE_KEY = 'sb_publishable_e4HxunvmqcXgo3A-0hWpGQ_nHJ6Exlp';                  // ← anon / public key
+const SUPABASE_URL = 'https://TU_PROYECTO.supabase.co';   // ← Project URL
+const SUPABASE_KEY = 'TU_ANON_KEY_AQUI';                  // ← anon / public key
 const ACCESS_PIN   = '2026';                               // ← PIN de acceso
 
 // Modo nube activo sólo si las credenciales han sido reemplazadas
@@ -1322,7 +1333,7 @@ const App = {
     document.getElementById('modal-body').innerHTML = `
       <div class="field"><label>Nombre completo *</label><input id="f-name" value="${c?.name||''}" placeholder="Ej: Valentina Torres"></div>
       <div class="field-row">
-        <div class="field"><label>Empresa *</label><input id="f-company" value="${c?.company||''}" placeholder="Ej: Arquimedes Tech"></div>
+        <div class="field"><label>Empresa</label><input id="f-company" value="${c?.company||''}" placeholder="Ej: Arquimedes Tech"></div>
         <div class="field"><label>Estado</label><select id="f-status">${STATUSES.map(s=>`<option value="${s}" ${c?.status===s?'selected':''}>${s.charAt(0).toUpperCase()+s.slice(1)}</option>`).join('')}</select></div>
       </div>
       <div class="field-row">
@@ -1337,8 +1348,8 @@ const App = {
   },
   async saveContact(existingId) {
     const name    = document.getElementById('f-name').value.trim();
-    const company = document.getElementById('f-company').value.trim();
-    if (!name || !company) { toast('⚠ Nombre y empresa son obligatorios'); return; }
+    const company = document.getElementById('f-company').value.trim() || '—';
+    if (!name) { toast('⚠ El nombre es obligatorio'); return; }
     const data = {
       name, company,
       status:       document.getElementById('f-status').value,
@@ -1796,4 +1807,15 @@ const App = {
 };
 
 App.init();
+
+// ── Service Worker (PWA instalable) ───────────────────────────────
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js')
+      .then(reg => console.log('SW registrado:', reg.scope))
+      .catch(err => console.log('SW error:', err));
+  });
+}
 </script>
+</body>
+</html>
