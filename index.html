@@ -1376,15 +1376,21 @@ const App = {
       toast('✅ Contacto creado · Deal "Entrante" generado', 'success');
       if (!USE_CLOUD) { saveLocal(); }
       else {
-        const [{ error:ce }, { error:de }] = await Promise.all([
-          db.from('contacts').insert(contact),
-          db.from('deals').insert(deal),
-        ]);
-        if (ce || de) {
+        // El deal depende del contacto (foreign key), asi que se guardan en orden,
+        // no en paralelo — si no, a veces el deal llega antes de que exista el contacto.
+        const { error:ce } = await db.from('contacts').insert(contact);
+        if (ce) {
           S.contacts = S.contacts.filter(c=>c.id!==newId);
           S.deals    = S.deals.filter(d=>d.id!==deal.id);
           this.renderView(); updateBadges();
-          toast('Error al sincronizar: ' + (ce||de).message, 'danger');
+          toast('Error al sincronizar: ' + ce.message, 'danger');
+          return;
+        }
+        const { error:de } = await db.from('deals').insert(deal);
+        if (de) {
+          S.deals = S.deals.filter(d=>d.id!==deal.id);
+          this.renderView(); updateBadges();
+          toast('Contacto creado, pero el deal no se pudo generar: ' + de.message, 'danger');
         }
       }
     }
