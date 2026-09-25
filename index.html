@@ -314,8 +314,29 @@ mark { background:var(--warn-dim);color:var(--warn);border-radius:2px; }
 .text-muted { color:var(--text-3);font-size:0.78rem; }
 .mono { font-family:'JetBrains Mono',monospace; }
 
+/* ── Cartera ────────────────────────────────────────── */
+.stat-grid--4 { grid-template-columns:repeat(4,1fr); }
+.cartera-actions { display:flex;align-items:center;gap:6px;white-space:nowrap; }
+.cartera-cards { display:none;flex-direction:column;gap:10px; }
+.cartera-card { padding:14px;display:flex;flex-direction:column;gap:12px; }
+.cartera-card-grid { display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px 10px; }
+.cartera-card-grid span { display:block;font-size:0.65rem;color:var(--text-3);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:2px; }
+.cartera-card-grid b { font-size:0.8rem;color:var(--text);font-weight:600; }
+.cartera-card .cartera-actions .btn { flex:1;justify-content:center; }
+.stat-grid.stat-grid--4 .stat-value { overflow-wrap:anywhere; }
+.filter-tabs { overflow-x:auto; }
+.filter-tab { white-space:nowrap; }
+@media (max-width:600px) {
+  .stat-grid.stat-grid--4 { grid-template-columns:1fr 1fr;gap:10px; }
+  .stat-grid--4 .stat-card { padding:12px; }
+  .stat-grid--4 .stat-value { font-size:1.2rem; }
+}
+
 /* ── Responsive ─────────────────────────────────────── */
 @media (max-width:900px) {
+  .stat-grid--4 { grid-template-columns:1fr 1fr; }
+  .cartera-table { display:none; }
+  .cartera-cards { display:flex; }
   .sidebar { width:60px;min-width:60px; }
   .sidebar-logo-text,.nav-item span,.nav-badge,.nav-section-label { display:none; }
   .nav-item { justify-content:center;padding:10px; }
@@ -445,11 +466,11 @@ mark { background:var(--warn-dim);color:var(--warn);border-radius:2px; }
     </nav>
 
     <div class="sidebar-bottom">
-      <button class="nav-item" id="sync-btn" onclick="App.syncAllToCloud()" title="Subir todos los datos a la nube">
+      <button class="nav-item" id="sync-btn" onclick="App.syncAllToCloud()" title="Actualizar datos desde la nube">
         <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
           <path d="M10 14V6M7 9l3-3 3 3"/><path d="M4 14a4 4 0 010-8 5.5 5.5 0 0110.9 1A3 3 0 0117 13"/>
         </svg>
-        <span>Subir a la nube</span>
+        <span>Actualizar datos</span>
       </button>
       <button class="nav-item" onclick="App.toggleTheme()">
         <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
@@ -568,23 +589,49 @@ function fmtCurrency(n) {
   if (n >= 1000)    return '$' + Math.round(n/1000) + 'k';
   return '$' + n;
 }
+// Las fechas 'AAAA-MM-DD' se leen como fecha local (no UTC); si no, en Colombia
+// (UTC-5) se muestran un día antes y los vencimientos se calculan mal.
+function parseDay(s) {
+  if (!s) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  return m ? new Date(+m[1], +m[2]-1, +m[3]) : new Date(s);
+}
 function fmtDate(s) {
   if (!s) return '—';
-  const d = new Date(s);
+  const d = parseDay(s);
   return d.toLocaleDateString('es-CO', { day:'2-digit', month:'short', year:'numeric' });
 }
+function startOfToday() { return new Date(new Date().toDateString()); }
 function isOverdue(s) {
   if (!s) return false;
-  return new Date(s) < new Date(new Date().toDateString());
+  return parseDay(s) < startOfToday();
+}
+function daysUntil(s) {
+  if (!s) return null;
+  return Math.round((parseDay(s) - startOfToday()) / 86400000);
 }
 function uid()   { return Math.random().toString(36).slice(2,9); }
-function today() { return new Date().toISOString().slice(0,10); }
+function today() {
+  const d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+}
+// Estado de pago efectivo de un deal: si ya se cobró el valor completo cuenta como
+// pagado, y un deal marcado como pagado no deja saldo pendiente.
+function payInfo(d) {
+  const value = d.value || 0, paid = d.amount_paid || 0;
+  let status = d.payment_status || 'pendiente';
+  if (value > 0 && paid >= value) status = 'pagado';
+  else if (status === 'pendiente' && paid > 0) status = 'parcial';
+  const balance = status === 'pagado' ? 0 : Math.max(0, value - paid);
+  const overdue = status !== 'pagado' && isOverdue(d.due_date);
+  return { value, paid, status, balance, overdue, daysLeft: daysUntil(d.due_date) };
+}
 
 /* ── Estado local (caché) ───────────────────────────── */
 const S = {
   contacts: [], deals: [], tasks: [], notes: [],
   view: 'dashboard', theme: null,
-  searchQuery: '', taskFilter: 'todas',
+  searchQuery: '', taskFilter: 'todas', carteraFilter: 'por-cobrar',
   dashMonth: new Date().getMonth(),
   dashYear:  new Date().getFullYear(),
 };
@@ -630,8 +677,8 @@ function exportCSV(type) {
     rows = [['Deal','Contacto','Empresa','Categoría Servicio','Etapa','Valor','Estado Pago','Saldo']];
     S.deals.forEach(d => {
       const c = contactById(d.contact_id);
-      const bal = Math.max(0,(d.value||0)-(d.amount_paid||0));
-      rows.push([d.name,c?.name||'',c?.company||'',d.service_cat||'',stLabel(d.stage),d.value||0,d.payment_status||'',bal]);
+      const p = isWonStage(d.stage) ? payInfo(d) : null;
+      rows.push([d.name,c?.name||'',c?.company||'',d.service_cat||'',stLabel(d.stage),d.value||0,p?p.status:'',p?p.balance:'']);
     });
     filename = 'deals-ecoglobal.csv';
   }
@@ -736,7 +783,7 @@ function toast(msg, type='info') {
 function updateBadges() {
   const pending     = S.tasks.filter(t => !t.done).length;
   const activeDeals = S.deals.filter(d => !isClosedStage(d.stage) && !isLostStage(d.stage)).length;
-  const carteraAbierta = S.deals.filter(d => isWonStage(d.stage) && (d.payment_status||'pendiente') !== 'pagado').length;
+  const carteraAbierta = S.deals.filter(d => isWonStage(d.stage) && payInfo(d).status !== 'pagado').length;
   document.getElementById('nb-contacts').textContent = S.contacts.length;
   document.getElementById('nb-pipeline').textContent = activeDeals;
   document.getElementById('nb-tasks').textContent    = pending;
@@ -774,11 +821,12 @@ function viewDashboard() {
   const closedValue = closedDeals.reduce((s, d) => s + (d.value||0), 0);
   const totalValue  = monthDeals.reduce((s, d) => s + (d.value||0), 0);
   // Payment breakdown (ganado deals)
-  const totalCobrado    = closedDeals.reduce((s, d) => s + (d.amount_paid||0), 0);
-  const totalPorCobrar  = closedDeals.reduce((s, d) => s + Math.max(0,(d.value||0)-(d.amount_paid||0)), 0);
-  const paidCount       = closedDeals.filter(d => d.payment_status === 'pagado').length;
-  const partialCount    = closedDeals.filter(d => d.payment_status === 'parcial').length;
-  const pendingCount    = closedDeals.filter(d => !d.payment_status || d.payment_status === 'pendiente').length;
+  const closedPay       = closedDeals.map(payInfo);
+  const totalPorCobrar  = closedPay.reduce((s, p) => s + p.balance, 0);
+  const totalCobrado    = closedValue - totalPorCobrar;
+  const paidCount       = closedPay.filter(p => p.status === 'pagado').length;
+  const partialCount    = closedPay.filter(p => p.status === 'parcial').length;
+  const pendingCount    = closedPay.filter(p => p.status === 'pendiente').length;
 
   // ── Tasa de conversión ──
   const convRate = newContacts.length > 0
@@ -867,13 +915,14 @@ function viewDashboard() {
                 const st = STAGES.find(s=>s.id===d.stage)||STAGES[0];
                 const isWon  = isWonStage(d.stage);
                 const isLost = isLostStage(d.stage);
-                const balance = isWon ? Math.max(0,(d.value||0)-(d.amount_paid||0)) : null;
+                const pay     = isWon ? payInfo(d) : null;
+                const balance = pay ? pay.balance : null;
                 return `<tr onclick="App.go('pipeline')" style="${isWon?'background:color-mix(in srgb,var(--ok) 5%,transparent)':isLost?'background:color-mix(in srgb,var(--text-3) 5%,transparent);opacity:0.7':''}">
                   <td><span style="font-weight:600;color:var(--text)">${d.name}</span>${d.proposal_num?`<div class="mono" style="font-size:0.68rem;color:var(--text-3)">Prop. #${d.proposal_num}</div>`:''}${d.invoice_num?`<div class="mono" style="font-size:0.68rem;color:var(--text-3)">Fac. #${d.invoice_num}</div>`:''}</td>
                   <td>${c ? `<div class="td-contact">${avatarEl(c.name)}<div><div class="td-name">${c.name}</div><div class="td-sub">${c.company}</div></div></div>` : '<span style="color:var(--text-3)">—</span>'}</td>
                   <td><span class="badge" style="background:${st.color}22;color:${st.color}">${st.label}</span></td>
                   <td class="mono">${fmtCurrency(d.value)}</td>
-                  <td>${isWon ? paymentStatusBadge(d.payment_status||'pendiente')+(balance>0?`<div class="mono" style="font-size:0.68rem;color:var(--warn);margin-top:2px">Saldo ${fmtCurrency(balance)}</div>`:'') : isLost ? `<span style="font-size:0.7rem;color:var(--text-3)">${d.lost_reason||'—'}</span>` : '<span style="color:var(--text-3)">—</span>'}</td>
+                  <td>${isWon ? paymentStatusBadge(pay.status)+(balance>0?`<div class="mono" style="font-size:0.68rem;color:var(--warn);margin-top:2px">Saldo ${fmtCurrency(balance)}</div>`:'') : isLost ? `<span style="font-size:0.7rem;color:var(--text-3)">${d.lost_reason||'—'}</span>` : '<span style="color:var(--text-3)">—</span>'}</td>
                 </tr>`;
               }).join('')}
           </tbody>
@@ -930,28 +979,67 @@ function viewDashboard() {
 }
 
 function viewCartera() {
-  const wonDeals = [...S.deals].filter(d => isWonStage(d.stage))
+  const all = S.deals.filter(d => isWonStage(d.stage)).map(d => ({ d, p: payInfo(d), c: contactById(d.contact_id) }));
+
+  // Totales (siempre sobre toda la cartera, sin importar el filtro)
+  const totalFacturado = all.reduce((s,x) => s + x.p.value, 0);
+  const totalPorCobrar = all.reduce((s,x) => s + x.p.balance, 0);
+  const totalCobrado   = totalFacturado - totalPorCobrar;
+  const vencidas       = all.filter(x => x.p.overdue).length;
+
+  const f = S.carteraFilter;
+  const counts = {
+    'por-cobrar': all.filter(x => x.p.status !== 'pagado').length,
+    'vencidas':   vencidas,
+    'pagadas':    all.filter(x => x.p.status === 'pagado').length,
+    'todas':      all.length,
+  };
+  const labels = { 'por-cobrar':'Por cobrar', 'vencidas':'Vencidas', 'pagadas':'Pagadas', 'todas':'Todas' };
+  const list = all.filter(x =>
+      f === 'por-cobrar' ? x.p.status !== 'pagado'
+    : f === 'vencidas'   ? x.p.overdue
+    : f === 'pagadas'    ? x.p.status === 'pagado'
+    : true)
     .sort((a,b) => {
-      // Vencidas primero, luego por vencer
-      const oa = a.due_date && new Date(a.due_date) < new Date() && (a.payment_status||'pendiente') !== 'pagado';
-      const ob = b.due_date && new Date(b.due_date) < new Date() && (b.payment_status||'pendiente') !== 'pagado';
-      if (oa !== ob) return oa ? -1 : 1;
-      return (a.due_date||'9999').localeCompare(b.due_date||'9999');
+      // Vencidas primero, luego por fecha de vencimiento
+      if (a.p.overdue !== b.p.overdue) return a.p.overdue ? -1 : 1;
+      return (a.d.due_date||'9999').localeCompare(b.d.due_date||'9999');
     });
 
-  // Totales
-  const totalFacturado  = wonDeals.reduce((s,d) => s+(d.value||0), 0);
-  const totalCobrado    = wonDeals.reduce((s,d) => s+(d.amount_paid||0), 0);
-  const totalPorCobrar  = wonDeals.reduce((s,d) => s+Math.max(0,(d.value||0)-(d.amount_paid||0)), 0);
-  const vencidas        = wonDeals.filter(d => d.due_date && new Date(d.due_date) < new Date() && (d.payment_status||'pendiente') !== 'pagado').length;
+  const dueCell = x => {
+    const { d, p } = x;
+    const color = p.overdue ? 'var(--danger)' : (p.daysLeft!==null && p.daysLeft<=7 && p.status!=='pagado') ? 'var(--warn)' : 'var(--text)';
+    return `<div class="mono" style="font-size:0.75rem;color:${color}">${fmtDate(d.due_date)}</div>
+      ${p.overdue ? `<div style="font-size:0.65rem;color:var(--danger);font-weight:700">VENCIDA ${Math.abs(p.daysLeft)}d</div>`
+        : p.daysLeft!==null && p.daysLeft<=7 && p.status!=='pagado' ? `<div style="font-size:0.65rem;color:var(--warn);font-weight:600">${p.daysLeft===0?'vence hoy':'vence en '+p.daysLeft+'d'}</div>` : ''}`;
+  };
+  const invoiceInfo = d => d.invoice_num
+    ? `<span class="mono">#${d.invoice_num}</span>${d.invoice_url?`<a href="${d.invoice_url}" target="_blank" rel="noopener" style="color:var(--accent);margin-left:6px">ver ↗</a>`:''}`
+    : `<span style="color:var(--danger)">Sin factura asignada</span>`;
+  const actions = x => {
+    const { d, p } = x;
+    return `<div class="cartera-actions">
+      ${p.status !== 'pagado'
+        ? `<button class="btn btn--primary btn--sm" onclick="App.markPaid('${d.id}')">✓ Pagado</button>
+           <button class="btn btn--ghost btn--sm" onclick="App.addPayment('${d.id}')">+ Abono</button>`
+        : `<button class="btn btn--ghost btn--sm" onclick="App.markUnpaid('${d.id}')">Marcar no pagado</button>`}
+      <button class="icon-btn" title="Editar factura" onclick="App.editDeal('${d.id}')">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M13.586 3.586a2 2 0 112.828 2.828L7 16H4v-3L13.586 3.586z"/></svg>
+      </button>
+    </div>`;
+  };
+
+  const empty = all.length === 0
+    ? `<p>Sin deals ganados aún. Mueve deals al estado <strong>Ganado ✓</strong> en el pipeline.</p>`
+    : `<p>No hay facturas en "${labels[f]}".</p>`;
 
   return `
   <!-- Resumen -->
-  <div class="stat-grid" style="margin-bottom:20px;grid-template-columns:repeat(4,1fr)">
+  <div class="stat-grid stat-grid--4" style="margin-bottom:16px">
     <div class="stat-card">
       <div class="stat-label">Total facturado</div>
       <div class="stat-value">${fmtCurrency(totalFacturado)}</div>
-      <div class="stat-sub">${wonDeals.length} deal${wonDeals.length!==1?'s':''} ganado${wonDeals.length!==1?'s':''}</div>
+      <div class="stat-sub">${all.length} deal${all.length!==1?'s':''} ganado${all.length!==1?'s':''}</div>
     </div>
     <div class="stat-card">
       <div class="stat-label">Cobrado</div>
@@ -970,8 +1058,12 @@ function viewCartera() {
     </div>
   </div>
 
-  <!-- Tabla de cartera -->
-  <div class="card">
+  <div class="filter-tabs">
+    ${Object.keys(labels).map(k => `<button class="filter-tab ${f===k?'active':''}" onclick="App.setCarteraFilter('${k}')">${labels[k]} (${counts[k]})</button>`).join('')}
+  </div>
+
+  <!-- Tabla (pantallas grandes) -->
+  <div class="card cartera-table">
     <div class="table-wrap">
       <table class="data-table">
         <thead>
@@ -988,57 +1080,57 @@ function viewCartera() {
           </tr>
         </thead>
         <tbody>
-        ${wonDeals.length === 0
-          ? `<tr><td colspan="9"><div class="empty-state" style="padding:40px 0">
-              <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-bottom:12px"><rect x="2" y="5" width="20" height="15" rx="2"/><path d="M2 10h20"/></svg>
-              <p>Sin deals ganados aún. Mueve deals al estado <strong>Ganado ✓</strong> en el pipeline.</p>
-            </div></td></tr>`
-          : wonDeals.map(d => {
-              const c       = contactById(d.contact_id);
-              const balance = Math.max(0,(d.value||0)-(d.amount_paid||0));
-              const ps      = d.payment_status || 'pendiente';
-              const isOverdueInv = d.due_date && new Date(d.due_date) < new Date() && ps !== 'pagado';
-              const daysLeft = d.due_date
-                ? Math.ceil((new Date(d.due_date) - new Date()) / 86400000)
-                : null;
-              return `
-              <tr style="${isOverdueInv?'background:color-mix(in srgb,var(--danger) 4%,transparent)':''}">
+        ${list.length === 0
+          ? `<tr><td colspan="9"><div class="empty-state" style="padding:40px 0">${empty}</div></td></tr>`
+          : list.map(x => { const { d, p, c } = x; return `
+              <tr style="${p.overdue?'background:color-mix(in srgb,var(--danger) 4%,transparent)':''}">
                 <td>
                   <div style="font-weight:600;color:var(--text)">${d.name}</div>
-                  ${d.invoice_num
-                    ? `<div style="font-size:0.7rem;color:var(--text-3);margin-top:2px">
-                        <span class="mono">#${d.invoice_num}</span>
-                        ${d.invoice_url?`<a href="${d.invoice_url}" target="_blank" style="color:var(--accent);margin-left:6px">ver ↗</a>`:''}
-                       </div>`
-                    : `<div style="font-size:0.7rem;color:var(--danger);margin-top:2px">Sin factura asignada</div>`}
+                  <div style="font-size:0.7rem;color:var(--text-3);margin-top:2px">${invoiceInfo(d)}</div>
                 </td>
-                <td>${c ? `<div class="td-contact">${avatarEl(c.name)}<div><div class="td-name">${c.name}</div><div class="td-sub">${c.company}</div></div></div>` : '<span style="color:var(--text-3)">—</span>'}</td>
+                <td>${c ? `<div class="td-contact">${avatarEl(c.name)}<div><div class="td-name">${c.name}</div><div class="td-sub">${c.company||''}</div></div></div>` : '<span style="color:var(--text-3)">—</span>'}</td>
                 <td class="mono" style="font-size:0.75rem;white-space:nowrap">${fmtDate(d.invoice_date)}</td>
-                <td style="white-space:nowrap">
-                  <div class="mono" style="font-size:0.75rem;color:${isOverdueInv?'var(--danger)':daysLeft!==null&&daysLeft<=7&&ps!=='pagado'?'var(--warn)':'var(--text)'}">${fmtDate(d.due_date)}</div>
-                  ${isOverdueInv ? `<div style="font-size:0.65rem;color:var(--danger);font-weight:700">VENCIDA ${Math.abs(daysLeft)}d</div>`
-                    : daysLeft!==null && daysLeft<=7 && ps!=='pagado' ? `<div style="font-size:0.65rem;color:var(--warn);font-weight:600">vence en ${daysLeft}d</div>` : ''}
-                </td>
-                <td class="mono" style="text-align:right;font-size:0.75rem">${fmtCurrency(d.value||0)}</td>
-                <td class="mono" style="text-align:right;font-size:0.75rem;color:var(--ok)">${d.amount_paid>0?fmtCurrency(d.amount_paid):'—'}</td>
-                <td class="mono" style="text-align:right;font-size:0.75rem;color:${balance>0?(isOverdueInv?'var(--danger)':'var(--warn)'):'var(--ok)'};font-weight:600">${balance>0?fmtCurrency(balance):'✓ Pagado'}</td>
-                <td>${paymentStatusBadge(ps)}</td>
-                <td>
-                  <button class="icon-btn" title="Editar deal" onclick="App.editDeal('${d.id}')">
-                    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M13.586 3.586a2 2 0 112.828 2.828L7 16H4v-3L13.586 3.586z"/></svg>
-                  </button>
-                </td>
-              </tr>`;
-            }).join('')}
+                <td style="white-space:nowrap">${dueCell(x)}</td>
+                <td class="mono" style="text-align:right;font-size:0.75rem">${fmtCurrency(p.value)}</td>
+                <td class="mono" style="text-align:right;font-size:0.75rem;color:var(--ok)">${p.paid>0?fmtCurrency(p.paid):'—'}</td>
+                <td class="mono" style="text-align:right;font-size:0.75rem;color:${p.balance>0?(p.overdue?'var(--danger)':'var(--warn)'):'var(--ok)'};font-weight:600">${p.balance>0?fmtCurrency(p.balance):'✓ Pagado'}</td>
+                <td>${paymentStatusBadge(p.status)}</td>
+                <td>${actions(x)}</td>
+              </tr>`; }).join('')}
         </tbody>
       </table>
     </div>
-    ${wonDeals.length > 0 ? `
-    <div style="display:flex;justify-content:flex-end;gap:24px;padding:12px 20px;border-top:1px solid var(--border);background:var(--surface-2);border-radius:0 0 var(--r) var(--r)">
+    ${list.length > 0 ? `
+    <div style="display:flex;justify-content:flex-end;flex-wrap:wrap;gap:12px 24px;padding:12px 20px;border-top:1px solid var(--border);background:var(--surface-2);border-radius:0 0 var(--r) var(--r)">
       <span style="font-size:0.75rem;color:var(--text-3)">Total: <span class="mono" style="color:var(--text);font-weight:600">${fmtCurrency(totalFacturado)}</span></span>
       <span style="font-size:0.75rem;color:var(--text-3)">Cobrado: <span class="mono" style="color:var(--ok);font-weight:600">${fmtCurrency(totalCobrado)}</span></span>
       <span style="font-size:0.75rem;color:var(--text-3)">Por cobrar: <span class="mono" style="color:var(--warn);font-weight:600">${fmtCurrency(totalPorCobrar)}</span></span>
     </div>` : ''}
+  </div>
+
+  <!-- Tarjetas (celular) -->
+  <div class="cartera-cards">
+    ${list.length === 0
+      ? `<div class="card empty-state" style="padding:40px 20px">${empty}</div>`
+      : list.map(x => { const { d, p, c } = x; return `
+        <div class="card cartera-card" style="${p.overdue?'border-color:var(--danger)':''}">
+          <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start">
+            <div style="min-width:0">
+              <div style="font-weight:700;color:var(--text);font-size:0.9rem">${c ? c.name : d.name}</div>
+              <div style="font-size:0.72rem;color:var(--text-3)">${c ? (c.company||'') : ''}</div>
+              <div style="font-size:0.72rem;color:var(--text-3);margin-top:2px">${invoiceInfo(d)}</div>
+            </div>
+            ${paymentStatusBadge(p.status)}
+          </div>
+          <div class="cartera-card-grid">
+            <div><span>Valor</span><b class="mono">${fmtCurrency(p.value)}</b></div>
+            <div><span>Cobrado</span><b class="mono" style="color:var(--ok)">${p.paid>0?fmtCurrency(p.paid):'—'}</b></div>
+            <div><span>Saldo</span><b class="mono" style="color:${p.balance>0?(p.overdue?'var(--danger)':'var(--warn)'):'var(--ok)'}">${p.balance>0?fmtCurrency(p.balance):'✓'}</b></div>
+            <div><span>Emisión</span><b class="mono">${fmtDate(d.invoice_date)}</b></div>
+            <div style="grid-column:span 2"><span>Vencimiento</span>${dueCell(x)}</div>
+          </div>
+          ${actions(x)}
+        </div>`; }).join('')}
   </div>`;
 }
 
@@ -1274,6 +1366,63 @@ const App = {
 
   onSearch(q) { S.searchQuery = q; this.renderView(); },
   setTaskFilter(f) { S.taskFilter = f; this.renderView(); },
+  setCarteraFilter(f) { S.carteraFilter = f; this.renderView(); },
+
+  /* ── Cartera: acciones rápidas de cobro ─── */
+  async updateDeal(id, fields, okMsg) {
+    const deal = S.deals.find(d => d.id === id);
+    if (!deal) return false;
+    const bk = { ...deal };
+    Object.assign(deal, fields);
+    this.renderView(); updateBadges();
+    if (!USE_CLOUD) { saveLocal(); syncDealToArtDB(deal); toast(okMsg, 'success'); return true; }
+    const { error } = await db.from('deals').update(fields).eq('id', id);
+    if (error) {
+      Object.assign(deal, bk); this.renderView(); updateBadges();
+      toast('Error al guardar: ' + error.message, 'danger');
+      return false;
+    }
+    toast(okMsg, 'success');
+    return true;
+  },
+  markPaid(id) {
+    const d = S.deals.find(x => x.id === id); if (!d) return;
+    this.updateDeal(id, { payment_status:'pagado', amount_paid:d.value||0, payment_date:today() }, '✓ Factura marcada como pagada');
+  },
+  markUnpaid(id) {
+    const d = S.deals.find(x => x.id === id); if (!d) return;
+    this.confirm(`¿Marcar <strong>${d.name}</strong> como <strong>no pagada</strong>? El monto cobrado vuelve a $0.`, () => {
+      this.updateDeal(id, { payment_status:'pendiente', amount_paid:0, payment_date:null }, 'Factura marcada como pendiente');
+    }, 'Sí, marcar no pagada');
+  },
+  addPayment(id) {
+    const d = S.deals.find(x => x.id === id); if (!d) return;
+    const p = payInfo(d);
+    document.getElementById('modal-title').textContent = 'Registrar abono';
+    document.getElementById('modal-body').innerHTML = `
+      <p style="font-size:0.82rem;color:var(--text-2);margin-bottom:12px">${d.name}${d.invoice_num?' · Factura #'+d.invoice_num:''}<br>
+        Valor ${fmtCurrency(p.value)} · Cobrado ${fmtCurrency(p.paid)} · <strong style="color:var(--warn)">Saldo ${fmtCurrency(p.balance)}</strong></p>
+      <div class="field-row">
+        <div class="field"><label>Monto del abono (COP) *</label><input id="pay-amount" type="number" min="1" value="${p.balance||''}"></div>
+        <div class="field"><label>Fecha del pago</label><input id="pay-date" type="date" value="${today()}"></div>
+      </div>`;
+    document.getElementById('modal-footer').innerHTML = `
+      <button class="btn btn--ghost" onclick="App.closeModal()">Cancelar</button>
+      <button class="btn btn--primary" onclick="App.savePayment('${id}')">Registrar abono</button>`;
+    this.openModal();
+  },
+  savePayment(id) {
+    const d = S.deals.find(x => x.id === id); if (!d) return;
+    const amount = parseInt(document.getElementById('pay-amount').value) || 0;
+    if (amount <= 0) { toast('⚠ Escribe el monto del abono'); return; }
+    const paid  = (d.amount_paid || 0) + amount;
+    const value = d.value || 0;
+    const status = value > 0 && paid >= value ? 'pagado' : 'parcial';
+    const payDate = document.getElementById('pay-date').value || today();
+    this.closeModal();
+    this.updateDeal(id, { amount_paid:paid, payment_status:status, payment_date:payDate },
+      status === 'pagado' ? '✓ Abono registrado · factura pagada' : 'Abono registrado · saldo ' + fmtCurrency(value - paid));
+  },
 
   dashNav(dir) {
     let m = S.dashMonth + dir, y = S.dashYear;
@@ -1341,7 +1490,7 @@ const App = {
       <div class="field"><label>Nombre completo *</label><input id="f-name" value="${c?.name||''}" placeholder="Ej: Valentina Torres"></div>
       <div class="field-row">
         <div class="field"><label>Empresa</label><input id="f-company" value="${c?.company||''}" placeholder="Ej: Arquimedes Tech"></div>
-        <div class="field"><label>Tipo de cliente</label><select id="f-status">${STATUSES.map(s=>`<option value="${s}" ${c?.status===s?'selected':''}>${s.charAt(0).toUpperCase()+s.slice(1)}</option>`).join('')}</select></div>
+        <div class="field"><label>Tipo de cliente</label><select id="f-status">${(c?.status && !STATUSES.includes(c.status) ? [c.status, ...STATUSES] : STATUSES).map(s=>`<option value="${s}" ${c?.status===s?'selected':''}>${s.charAt(0).toUpperCase()+s.slice(1)}</option>`).join('')}</select></div>
       </div>
       <div class="field"><label>Categoría de servicio</label><select id="f-service-cat"><option value="">Sin categoría</option>${SERVICE_CATS.map(s=>`<option value="${s}" ${c?.service_cat===s?'selected':''}>${s}</option>`).join('')}</select></div>
       <div class="field-row">
@@ -1384,35 +1533,27 @@ const App = {
     } else {
       const newId = 'c' + uid();
       const contact = { id:newId, ...data, created_at: new Date().toISOString() };
-      const deal    = { id:'d'+uid(), name:'Lead – '+name, contact_id:newId, stage:'lead', value:0, created_at:today() };
+      const deal    = { id:'d'+uid(), name:'Lead – '+name, contact_id:newId, stage:'lead', value:0, service_cat:data.service_cat||null, created_at:today() };
       S.contacts.unshift(contact); S.deals.unshift(deal);
       this.closeModal(); this.renderView(); updateBadges();
       toast('✅ Contacto creado · Deal "Entrante" generado', 'success');
       if (!USE_CLOUD) { saveLocal(); }
       else {
-        // Intenta con todos los campos; si falla, reintenta con campos mínimos
-        let [{ error:ce }, { error:de }] = await Promise.all([
-          db.from('contacts').insert(contact),
-          db.from('deals').insert(deal),
-        ]);
-        if (ce || de) {
-          // Reintento con campos mínimos (sin service_cat y sin status constraint)
-          const contactMin = { id:contact.id, name:contact.name, company:contact.company,
-            email:contact.email||null, phone:contact.phone||null,
-            last_contact:contact.last_contact||null, created_at:contact.created_at,
-            status: ['prospecto','lead','inactivo'].includes(contact.status) ? contact.status : 'prospecto' };
-          const dealMin = { id:deal.id, name:deal.name, contact_id:deal.contact_id,
-            stage:deal.stage, value:deal.value||0, created_at:deal.created_at };
-          const r2 = await Promise.all([
-            db.from('contacts').insert(contactMin),
-            db.from('deals').insert(dealMin),
-          ]);
-          ce = r2[0].error; de = r2[1].error;
-          if (!ce && !de) toast('⚠ Guardado en la nube (sin todos los campos). Ejecutar migración SQL en Supabase.','warn');
+        // El deal depende del contacto (foreign key), así que se guardan en orden,
+        // no en paralelo — si no, a veces el deal llega antes de que exista el contacto.
+        const { error:ce } = await db.from('contacts').insert(contact);
+        if (ce) {
+          S.contacts = S.contacts.filter(c=>c.id!==newId);
+          S.deals    = S.deals.filter(d=>d.id!==deal.id);
+          this.renderView(); updateBadges();
+          toast('Error al guardar el contacto: ' + ce.message, 'danger');
+          return;
         }
-        if (ce || de) {
-          saveLocal(); // Guarda localmente para no perder el dato
-          toast('⚠ Guardado localmente (sin conexión a nube). Error: ' + (ce||de).message, 'warn');
+        const { error:de } = await db.from('deals').insert(deal);
+        if (de) {
+          S.deals = S.deals.filter(d=>d.id!==deal.id);
+          this.renderView(); updateBadges();
+          toast('Contacto creado, pero el deal no se pudo generar: ' + de.message, 'danger');
         }
       }
     }
@@ -1542,6 +1683,14 @@ const App = {
       // Perdido
       lost_reason:    isLostStage(stage) ? (g('d-lost-reason')?.value.trim()||null) : null,
     };
+    if (!data.contact_id) data.contact_id = null;
+    // Mantener coherente estado de pago y monto cobrado
+    if (isWonStage(stage)) {
+      if (data.payment_status === 'pagado' && !data.amount_paid) data.amount_paid = data.value;
+      else if (data.value > 0 && data.amount_paid >= data.value) data.payment_status = 'pagado';
+      else if (data.payment_status === 'pendiente' && data.amount_paid > 0) data.payment_status = 'parcial';
+      if (data.payment_status === 'pagado' && !data.payment_date) data.payment_date = today();
+    }
     const existingId = currentEditDeal?.id;
     if (existingId) {
       const deal = S.deals.find(d=>d.id===existingId);
@@ -1611,7 +1760,7 @@ const App = {
   async saveTask(existingId) {
     const title = document.getElementById('tk-title').value.trim();
     if (!title) { toast('⚠ El título es obligatorio'); return; }
-    const data = { title, contact_id:document.getElementById('tk-contact').value, priority:document.getElementById('tk-priority').value, due_date:document.getElementById('tk-date').value, done:false };
+    const data = { title, contact_id:document.getElementById('tk-contact').value || null, priority:document.getElementById('tk-priority').value, due_date:document.getElementById('tk-date').value || null, done:false };
     if (existingId) {
       const t = S.tasks.find(t=>t.id===existingId);
       const bk = {...t}; Object.assign(t, data);
@@ -1764,7 +1913,7 @@ const App = {
   },
 
   /* ── Confirm modal (reemplaza window.confirm) ─── */
-  confirm(msg, onYes) {
+  confirm(msg, onYes, yesLabel = 'Sí, eliminar') {
     document.getElementById('modal-title').textContent = 'Confirmar acción';
     document.getElementById('modal-body').innerHTML = `
       <div style="display:flex;gap:14px;align-items:flex-start">
@@ -1775,7 +1924,7 @@ const App = {
       </div>`;
     document.getElementById('modal-footer').innerHTML = `
       <button class="btn btn--ghost" onclick="App.closeModal()">Cancelar</button>
-      <button class="btn btn--danger" id="confirm-yes-btn">Sí, eliminar</button>`;
+      <button class="btn btn--danger" id="confirm-yes-btn">${yesLabel}</button>`;
     document.getElementById('modal-overlay').classList.add('open');
     document.getElementById('confirm-yes-btn').onclick = () => {
       document.getElementById('modal-overlay').classList.remove('open');
@@ -1785,6 +1934,14 @@ const App = {
 
   /* ── Subir todo a la nube ─── */
   async syncAllToCloud() {
+    // Con Supabase activo cada cambio ya se guarda en la nube al momento;
+    // este botón solo vuelve a traer los datos más recientes.
+    if (USE_CLOUD) {
+      await loadData();
+      this.go(S.view);
+      toast('✅ Datos actualizados desde la nube', 'success');
+      return;
+    }
     if (!artDb) {
       toast('⏳ Conectando a la nube… intenta en unos segundos', 'info');
       await initArtifactDB();

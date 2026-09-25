@@ -1,5 +1,5 @@
-// Service Worker — CRM Eco Global
-const CACHE = 'ecoglobal-crm-v2';
+﻿// Service Worker â€” CRM Eco Global
+const CACHE = 'ecoglobal-crm-v3';
 const ASSETS = [
   './',
   './index.html',
