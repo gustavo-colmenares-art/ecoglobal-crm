@@ -542,6 +542,9 @@ mark { background:var(--warn-dim);color:var(--warn);border-radius:2px; }
 const SUPABASE_URL = 'https://ajadwjpjobgexrdjobyb.supabase.co';   // ← Project URL
 const SUPABASE_KEY = 'sb_publishable_e4HxunvmqcXgo3A-0hWpGQ_nHJ6Exlp';                  // ← anon / public key
 const ACCESS_PIN   = '2026';                               // ← PIN de acceso
+// Huella SHA-256 de la clave de administrador (necesaria para "Limpiar CRM").
+// La clave no se guarda aquí; para cambiarla hay que generar una huella nueva.
+const ADMIN_CODE_HASH = '2dfd9a84e7355a2b6e8a877334b480dde09d14b58f0c8b8488b27a9b3d2b72ea';
 
 // Modo nube activo sólo si las credenciales han sido reemplazadas
 const USE_CLOUD = !SUPABASE_URL.includes('TU_PROYECTO') && !SUPABASE_KEY.includes('TU_ANON');
@@ -685,6 +688,18 @@ function exportCSV(type) {
   const csv = rows.map(r=>r.map(esc).join(',')).join('\r\n');
   const blob = new Blob(['﻿'+csv],{type:'text/csv;charset=utf-8'});
   const a = document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=filename; a.click();
+}
+async function sha256Hex(text) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2,'0')).join('');
+}
+function downloadBackup() {
+  const data = { exportado: new Date().toISOString(), contacts:S.contacts, deals:S.deals, tasks:S.tasks, notes:S.notes };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type:'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'respaldo-crm-ecoglobal-' + today() + '.json';
+  a.click();
 }
 function saveLocal() {
   try { localStorage.setItem(LS_KEY, JSON.stringify({ contacts:S.contacts, deals:S.deals, tasks:S.tasks, notes:S.notes })); } catch(e) {}
@@ -1963,21 +1978,49 @@ const App = {
   },
 
   /* ── Limpiar CRM ─── */
+  // Protegido con clave de administrador (distinta del PIN de acceso) + escribir BORRAR.
+  // Antes de borrar se descarga una copia de seguridad con todos los datos.
   clearCRM() {
-    this.confirm('¿Eliminar <strong>TODOS</strong> los contactos, deals, tareas y notas?<br><br>Esta acción no se puede deshacer.', async () => {
-      const bk = { contacts:[...S.contacts], deals:[...S.deals], tasks:[...S.tasks], notes:[...S.notes] };
+    document.getElementById('modal-title').textContent = 'Borrar TODO el CRM';
+    document.getElementById('modal-body').innerHTML = `
+      <div style="background:var(--danger-dim);color:var(--danger);border-radius:8px;padding:10px 12px;font-size:0.8rem;line-height:1.55;margin-bottom:14px">
+        Se eliminarán <strong>todos</strong> los contactos (${S.contacts.length}), deals (${S.deals.length}), tareas (${S.tasks.length}) y notas (${S.notes.length}) para <strong>todos los usuarios</strong>.
+        Antes de borrar se descargará una copia de seguridad.
+      </div>
+      <div class="field"><label>Clave de administrador *</label><input id="adm-code" type="password" autocomplete="off" placeholder="Solo el administrador la conoce"></div>
+      <div class="field"><label>Escribe <strong>BORRAR</strong> para confirmar *</label><input id="adm-confirm" autocomplete="off" placeholder="BORRAR"></div>`;
+    document.getElementById('modal-footer').innerHTML = `
+      <button class="btn btn--ghost" onclick="App.closeModal()">Cancelar</button>
+      <button class="btn btn--danger" onclick="App.doClearCRM()">Descargar copia y borrar todo</button>`;
+    this.openModal();
+  },
+  async doClearCRM() {
+    const code    = document.getElementById('adm-code').value.trim().toUpperCase();
+    const confirm = document.getElementById('adm-confirm').value.trim().toUpperCase();
+    if (!code) { toast('⚠ Escribe la clave de administrador'); return; }
+    if (confirm !== 'BORRAR') { toast('⚠ Escribe BORRAR para confirmar'); return; }
+    let ok = false;
+    try { ok = await sha256Hex('ecoglobal-admin:' + code) === ADMIN_CODE_HASH; }
+    catch(e) { toast('⚠ No se pudo verificar la clave: ' + e.message, 'danger'); return; }
+    if (!ok) { toast('⛔ Clave de administrador incorrecta', 'danger'); return; }
+
+    downloadBackup();
+    this.closeModal();
+    if (!USE_CLOUD) {
       S.contacts=[]; S.deals=[]; S.tasks=[]; S.notes=[];
-      this.go('dashboard'); toast('🗑 CRM limpiado — listo para empezar', 'success');
-      if (!USE_CLOUD) { saveLocal(); return; }
-      try {
-        for (const tbl of ['notes','tasks','deals','contacts']) {
-          await db.from(tbl).delete().filter('id','like','%');
-        }
-      } catch(e) {
-        Object.assign(S, bk); this.go('dashboard');
-        toast('Error al limpiar: ' + e.message, 'danger');
+      saveLocal(); this.go('dashboard'); toast('🗑 CRM limpiado · copia descargada', 'success');
+      return;
+    }
+    for (const tbl of ['notes','tasks','deals','contacts']) {
+      const { error } = await db.from(tbl).delete().filter('id','like','%');
+      if (error) {
+        await loadData(); this.go('dashboard');
+        toast('Error al borrar ' + tbl + ': ' + error.message + ' (la copia ya se descargó)', 'danger');
+        return;
       }
-    });
+    }
+    S.contacts=[]; S.deals=[]; S.tasks=[]; S.notes=[];
+    this.go('dashboard'); toast('🗑 CRM limpiado · copia descargada', 'success');
   },
 
   /* ── Init ─── */
